@@ -521,6 +521,21 @@ describe('globalErrorHandler — production mode safety', () => {
     expect(JSON.stringify(body)).not.toContain('Cannot read properties');
   });
 
+  test.each(['staging', 'production'])('%s: database failures expose only public fields', (environment) => {
+    process.env.NODE_ENV = environment;
+    const err = Object.assign(new Error('MongoServerError: db.paymentIntents.find({ studentId: "private" })'), {
+      code: 123,
+      details: { collection: 'paymentIntents', query: { studentId: 'private' } },
+    });
+    const res = makeRes();
+    globalErrorHandler(err, { ...makeReq(), requestId: 'ci-request-id' }, res, jest.fn());
+    expect(res._calls[0]).toEqual({
+      success: false,
+      error: { code: 'INTERNAL_ERROR', message: 'An internal server error occurred.', category: 'INTERNAL' },
+      requestId: 'ci-request-id',
+    });
+  });
+
   test('production: JWT_SECRET value never appears in any response body', () => {
     process.env.NODE_ENV = 'production';
     const err = new Error(`JWT_SECRET=${process.env.JWT_SECRET}`);
@@ -556,6 +571,8 @@ describe('Error response shape — code field present on auth failures', () => {
       // Must have a code
       const code = res.body.code || res.body?.error?.code;
       expect(code).toBeTruthy();
+      expect(res.body.requestId).toBeTruthy();
+      expect(res.body.requestId).toBe(res.headers['x-request-id']);
 
       // Must be safe
       const violations = assertResponseSafe(res.body, `${method.toUpperCase()} ${path}`);
