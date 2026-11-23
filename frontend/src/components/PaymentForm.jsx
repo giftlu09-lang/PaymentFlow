@@ -88,6 +88,8 @@ export default function PaymentForm({ initialStudentId = "", disabled = false, t
   const errorRef    = useRef(null);
   const debounceRef = useRef(null);
   const qrWrapperRef = useRef(null);
+  const rateDialogRef = useRef(null);
+  const rateExpired = Boolean(intent && secondsLeft === 0);
   // Holds the AbortController for the in-flight lookup so a superseded request
   // can be cancelled before the next one starts (race-condition fix).
   const lookupAbortRef = useRef(null);
@@ -161,9 +163,14 @@ export default function PaymentForm({ initialStudentId = "", disabled = false, t
     };
   }, [intent]);
 
+  useEffect(() => {
+    if (rateExpired) rateDialogRef.current?.showModal();
+  }, [rateExpired]);
+
   async function refreshRate() {
     if (refreshing) return;
     const controller = lookupAbortRef.current;
+    if (!controller || disabled) return;
     setRefreshing(true);
     setError("");
     try {
@@ -174,7 +181,9 @@ export default function PaymentForm({ initialStudentId = "", disabled = false, t
       setSecondsLeft(Math.max(0, Math.ceil((Date.parse(data.expiresAt) - Date.now()) / 1000)));
       setIntent(data);
     } catch (err) {
-      if (!controller.signal.aborted) setError(getErrorMessage(err) || t("paymentForm.rateRefreshFailed", "Could not refresh the rate. Try again."));
+      if (!controller.signal.aborted) {
+        setError(getErrorMessage(err.response?.data?.code, t("paymentForm.rateRefreshFailed", "Could not refresh the rate. Try again.")));
+      }
     } finally {
       if (!controller.signal.aborted) setRefreshing(false);
     }
@@ -476,7 +485,7 @@ export default function PaymentForm({ initialStudentId = "", disabled = false, t
             </div>
           )}
 
-          {error && (
+          {error && !rateExpired && (
             <div ref={errorRef} role="alert" tabIndex="-1" className="alert alert-danger" style={{ marginTop: "1rem" }}>
               <IconAlertTriangle size={15} />
               <span>{error}</span>
@@ -500,15 +509,21 @@ export default function PaymentForm({ initialStudentId = "", disabled = false, t
                   {t("paymentForm.rateChanged", "Amount changed from {{from}} to {{to}} due to a rate update", amountChange)}
                 </div>
               )}
-              {secondsLeft === 0 && (
-                <section role="alert" className="alert alert-warning">
-                  <p>{t("paymentForm.rateExpired", "Rate expired")}</p>
-                  <button type="button" className="btn btn-dark" onClick={refreshRate} disabled={refreshing}>
+              {rateExpired && (
+                <dialog
+                  ref={rateDialogRef}
+                  aria-labelledby="payment-rate-expired"
+                  onCancel={(event) => event.preventDefault()}
+                  style={{ margin: "auto", padding: "1.5rem", maxWidth: "min(90vw, 28rem)" }}
+                >
+                  <h2 id="payment-rate-expired">{t("paymentForm.rateExpired", "Rate expired")}</h2>
+                  {error && <p role="alert">{error}</p>}
+                  <button type="button" className="btn btn-dark" onClick={refreshRate} disabled={refreshing || disabled}>
                     {refreshing
                       ? t("paymentForm.rateRefreshing", "Refreshing rate…")
                       : t("paymentForm.rateRefresh", "Refresh and get the latest rate")}
                   </button>
-                </section>
+                </dialog>
               )}
               {/* #101 — confirmation step: user must review & confirm before
                   payment details (QR code, wallet address) are revealed.
